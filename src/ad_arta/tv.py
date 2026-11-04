@@ -85,6 +85,11 @@ class FrameArt(SamsungTVArt):
                     raise exceptions.ConnectionFailure(
                         f"Websocket Time out: {err}"
                     ) from err
+                except (websocket.WebSocketException, OSError) as err:
+                    # e.g. the TV drops connections while switching modes
+                    raise exceptions.ConnectionFailure(
+                        f"Lost connection to the TV: {err}"
+                    ) from err
                 if opcode in (websocket.ABNF.OPCODE_PING, websocket.ABNF.OPCODE_PONG):
                     continue  # already answered by websocket-client
                 if opcode == websocket.ABNF.OPCODE_CLOSE:
@@ -267,6 +272,27 @@ class FrameTV:
         finally:
             remote.close()
 
+    def _open_art_when_ready(self, seconds: float) -> FrameArt | None:
+        """Keep connecting to the art channel until the service is there.
+
+        After a power key press the TV may drop connections and be briefly
+        unreachable, so reconnect instead of waiting on one connection.
+        """
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            art = self._art()
+            try:
+                art.open(ready_wait=min(remaining, READY_WAIT_BEFORE_WAKE))
+                if art.ready:
+                    return art
+            except (exceptions.ConnectionFailure, websocket.WebSocketException, OSError) as err:
+                log.debug("Art channel not available yet: %s", err)
+                time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+            art.close()
+
     def set_art_mode(self, on: bool) -> None:
         wanted = "on" if on else "off"
         art = self._art()
@@ -276,8 +302,10 @@ class FrameTV:
                 # The power press may flip Art Mode the wrong way; the state is
                 # read and set explicitly below, so it ends up right either way.
                 log.info("Art Mode service isn't running, pressing power to wake it")
+                art.close()
                 self._press_power()
-                if not art.wait_ready(WAKE_WAIT):
+                art = self._open_art_when_ready(WAKE_WAIT)
+                if art is None:
                     raise RuntimeError(DID_NOT_START)
             current = art.get_artmode()
             if current == wanted:
@@ -285,10 +313,11 @@ class FrameTV:
                 return
             log.info("Turning Art Mode %s", wanted)
             art.set_artmode_confirmed(wanted)
-        except exceptions.ConnectionFailure as err:
+        except (exceptions.ConnectionFailure, websocket.WebSocketException, OSError) as err:
             raise RuntimeError(NO_ART_ANSWER) from err
         finally:
-            art.close()
+            if art is not None:
+                art.close()
 
     def go_to_art(self) -> None:
         self.ensure_on()

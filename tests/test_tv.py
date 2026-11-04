@@ -309,14 +309,18 @@ class FakeArt:
         self.opened_with = None
         self.set_calls = []
         self.closed = False
+        self.opens = 0
+        self.unreachable_opens = 0
 
     def open(self, ready_wait):
-        self.opened_with = ready_wait
-
-    def wait_ready(self, seconds):
+        if self.opened_with is None:
+            self.opened_with = ready_wait
+        self.opens += 1
+        if self.unreachable_opens:
+            self.unreachable_opens -= 1
+            raise ConnectionRefusedError("TV is switching")
         if self.tv.power_presses and self.ready_after_power:
             self.ready = True
-        return self.ready
 
     def get_artmode(self):
         from samsungtvws import exceptions
@@ -339,8 +343,12 @@ def tv_with_fake_art(tmp_path, monkeypatch, **art_kw):
     def press():
         tv.power_presses += 1
 
+    unreachable = art_kw.pop("unreachable_opens", 0)
     art = FakeArt(tv, **art_kw)
+    art.unreachable_opens = unreachable
     monkeypatch.setattr(tv, "_art", lambda: art)
+    monkeypatch.setattr(tv_mod, "WAKE_WAIT", 0.3)
+    monkeypatch.setattr(tv_mod.time, "sleep", lambda s: None)
     monkeypatch.setattr(tv, "_press_power", press)
     return tv, art
 
@@ -393,3 +401,41 @@ def test_set_art_mode_gives_friendly_error_when_service_stops_answering(
     with pytest.raises(RuntimeError, match="stopped answering"):
         tv.set_art_mode(True)
     assert tv.power_presses == 0
+
+
+def test_set_art_mode_reconnects_when_tv_drops_off_after_power_key(
+    tmp_path, monkeypatch
+):
+    # After the press the TV is briefly unreachable, as seen on a real Frame.
+    tv, art = tv_with_fake_art(tmp_path, monkeypatch, ready=False, mode="off")
+    original_open = art.open
+
+    def open_then_unreachable(ready_wait):
+        original_open(ready_wait)
+        if tv.power_presses and art.opens == 2:
+            raise ConnectionResetError("connection dropped")
+
+    art.open = open_then_unreachable
+    tv.set_art_mode(True)
+    assert tv.power_presses == 1
+    assert art.opens == 3
+    assert art.set_calls == ["on"]
+
+
+def test_set_art_mode_unreachable_tv_gives_friendly_error(tmp_path, monkeypatch):
+    tv, art = tv_with_fake_art(tmp_path, monkeypatch, unreachable_opens=1)
+    with pytest.raises(RuntimeError, match="stopped answering"):
+        tv.set_art_mode(True)
+    assert tv.power_presses == 0
+
+
+def test_recv_frame_turns_dropped_connection_into_connection_failure(tmp_path):
+    from samsungtvws import exceptions
+
+    class DroppedConn(PingingConn):
+        def recv_data_frame(self, control_frame=False):
+            raise websocket.WebSocketConnectionClosedException("closed")
+
+    art = art_with_conn(tmp_path, DroppedConn())
+    with pytest.raises(exceptions.ConnectionFailure, match="Lost connection"):
+        art._recv_frame()
