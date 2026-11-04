@@ -15,7 +15,7 @@ class TV(Protocol):
 
 
 class Bridge:
-    def __init__(self, tv: TV, off_delay: float = 2.0, wake_tv: bool = True) -> None:
+    def __init__(self, tv: TV, off_delay: float = 0.0, wake_tv: bool = True) -> None:
         self.tv = tv
         self.off_delay = off_delay
         self.wake_tv = wake_tv

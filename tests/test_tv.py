@@ -312,9 +312,9 @@ class FakeArt:
         self.opens = 0
         self.unreachable_opens = 0
 
-    def open(self, ready_wait):
+    def open(self, ready_wait, wait_if_absent=None):
         if self.opened_with is None:
-            self.opened_with = ready_wait
+            self.opened_with = (ready_wait, wait_if_absent)
         self.opens += 1
         if self.unreachable_opens:
             self.unreachable_opens -= 1
@@ -370,7 +370,8 @@ def test_set_art_mode_already_in_wanted_state(tmp_path, monkeypatch):
 def test_set_art_mode_wakes_stopped_service_with_power_key(tmp_path, monkeypatch):
     tv, art = tv_with_fake_art(tmp_path, monkeypatch, ready=False, mode="off")
     tv.set_art_mode(True)
-    assert art.opened_with == tv_mod.READY_WAIT_BEFORE_WAKE
+    # Missing service: don't wait before pressing the key.
+    assert art.opened_with == (tv_mod.READY_WAIT_BEFORE_WAKE, 0)
     assert tv.power_presses == 1
     assert art.set_calls == ["on"]
 
@@ -410,8 +411,8 @@ def test_set_art_mode_reconnects_when_tv_drops_off_after_power_key(
     tv, art = tv_with_fake_art(tmp_path, monkeypatch, ready=False, mode="off")
     original_open = art.open
 
-    def open_then_unreachable(ready_wait):
-        original_open(ready_wait)
+    def open_then_unreachable(ready_wait, wait_if_absent=None):
+        original_open(ready_wait, wait_if_absent)
         if tv.power_presses and art.opens == 2:
             raise ConnectionResetError("connection dropped")
 
@@ -439,3 +440,67 @@ def test_recv_frame_turns_dropped_connection_into_connection_failure(tmp_path):
     art = art_with_conn(tmp_path, DroppedConn())
     with pytest.raises(exceptions.ConnectionFailure, match="Lost connection"):
         art._recv_frame()
+
+
+def test_set_art_mode_waits_longer_right_after_waking(tmp_path, monkeypatch):
+    tv, art = tv_with_fake_art(tmp_path, monkeypatch, ready=True, mode="off")
+    tv.set_art_mode(True, just_woke=True)
+    assert art.opened_with == (tv_mod.READY_WAIT, None)
+
+
+def test_go_to_art_passes_wake_state(tmp_path, monkeypatch):
+    tv = make_tv(tmp_path)
+    seen = []
+    monkeypatch.setattr(tv, "ensure_on", lambda: True)
+    monkeypatch.setattr(tv, "set_art_mode", lambda on, just_woke: seen.append((on, just_woke)))
+    tv.go_to_art()
+    assert seen == [(True, True)]
+
+
+# --- host detection ---------------------------------------------------------
+
+
+def connect_event(*clients):
+    return {"event": "ms.channel.connect", "data": {"clients": list(clients), "id": "x"}}
+
+
+def test_host_present_from_connect_list(tmp_path):
+    art = tv_mod.FrameArt("1.2.3.4", port=8002, token_file=str(tmp_path / "t"))
+    art._websocket_event(
+        "ms.channel.connect",
+        connect_event({"isHost": False}, {"isHost": True, "deviceName": "Smart Device"}),
+    )
+    assert art.host_present
+
+
+def test_host_absent_from_connect_list(tmp_path):
+    art = tv_mod.FrameArt("1.2.3.4", port=8002, token_file=str(tmp_path / "t"))
+    art._websocket_event("ms.channel.connect", connect_event({"isHost": False}))
+    assert not art.host_present
+    art._websocket_event(
+        "ms.channel.clientConnect",
+        {"event": "ms.channel.clientConnect", "data": {"isHost": True}},
+    )
+    assert art.host_present
+
+
+def test_open_returns_at_once_when_service_absent(monkeypatch, tmp_path):
+    from samsungtvws.connection import SamsungTVWSConnection
+
+    conn = FakeConn()
+
+    def fake_open(self):
+        self.connection = conn
+        self._websocket_event("ms.channel.connect", connect_event({"isHost": False}))
+        return conn
+
+    monkeypatch.setattr(SamsungTVWSConnection, "open", fake_open)
+    art = tv_mod.FrameArt("1.2.3.4", port=8002, token_file=str(tmp_path / "t"))
+
+    def no_recv():
+        raise AssertionError("should not wait for frames")
+
+    monkeypatch.setattr(art, "_recv_frame", no_recv)
+    art.open(ready_wait=8, wait_if_absent=0)
+    assert not art.ready
+    assert not art.host_present

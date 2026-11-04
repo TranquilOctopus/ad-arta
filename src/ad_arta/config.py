@@ -31,7 +31,7 @@ class AppleTVConfig:
 
 @dataclass
 class BridgeConfig:
-    off_delay: float = 2.0
+    off_delay: float = 0.0
     wake_tv_with_appletv: bool = True
 
 

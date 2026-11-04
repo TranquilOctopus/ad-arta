@@ -10,7 +10,12 @@ import websocket
 from samsungtvws import SamsungTVWS, exceptions, helper
 from samsungtvws.art import SamsungTVArt
 from samsungtvws.connection import SamsungTVWSConnection
-from samsungtvws.event import D2D_SERVICE_MESSAGE_EVENT, MS_CHANNEL_READY_EVENT
+from samsungtvws.event import (
+    D2D_SERVICE_MESSAGE_EVENT,
+    MS_CHANNEL_CLIENT_CONNECT_EVENT,
+    MS_CHANNEL_CONNECT_EVENT,
+    MS_CHANNEL_READY_EVENT,
+)
 from wakeonlan import send_magic_packet
 
 from .config import TVConfig
@@ -29,7 +34,9 @@ READY_WAIT = 15.0
 
 # When switching Art Mode: how long to wait for the art service before
 # pressing the power key to wake it, and how long to wait after pressing it.
-# The service rejoined ~7s after a power key press on a 2020 Frame.
+# The service rejoined ~7s after a power key press on a 2020 Frame. The wait
+# before pressing only applies while the service is on the channel but not
+# ready yet; when it is missing altogether the key is pressed at once.
 READY_WAIT_BEFORE_WAKE = 8.0
 WAKE_WAIT = 20.0
 REMOTE_WAKE_TIMEOUT = 20.0
@@ -60,6 +67,19 @@ class FrameArt(SamsungTVArt):
     """
 
     ready = False
+    host_present = False
+
+    def _websocket_event(self, event, response):
+        super()._websocket_event(event, response)
+        data = response.get("data") or {}
+        if event == MS_CHANNEL_CONNECT_EVENT and isinstance(data, dict):
+            # The TV lists everyone on the channel; its art service is the host.
+            self.host_present = any(
+                c.get("isHost") for c in data.get("clients", []) if isinstance(c, dict)
+            )
+        elif event == MS_CHANNEL_CLIENT_CONNECT_EVENT and isinstance(data, dict):
+            if data.get("isHost"):
+                self.host_present = True
 
     def _recv_frame(self):
         """Receive one frame, giving up after the socket timeout in total.
@@ -110,11 +130,22 @@ class FrameArt(SamsungTVArt):
         self._websocket_event(event, response)
         return event, response
 
-    def open(self, ready_wait: float = READY_WAIT):
+    def open(
+        self, ready_wait: float = READY_WAIT, wait_if_absent: float | None = None
+    ):
+        """Connect and wait up to `ready_wait` for ms.channel.ready.
+
+        If the art service isn't on the channel at all, wait `wait_if_absent`
+        instead (defaults to `ready_wait`; 0 returns at once).
+        """
         # Skip SamsungTVArt.open (the strict ready check), use the base one.
-        SamsungTVWSConnection.open(self)
         self.ready = False
-        self.wait_ready(ready_wait)
+        self.host_present = False
+        SamsungTVWSConnection.open(self)
+        wait = ready_wait
+        if not self.host_present and wait_if_absent is not None:
+            wait = wait_if_absent
+        self.wait_ready(wait)
         return self.connection
 
     def wait_ready(self, seconds: float) -> bool:
@@ -246,10 +277,13 @@ class FrameTV:
 
     # --- actions ---------------------------------------------------------
 
-    def ensure_on(self) -> None:
-        """Wake the TV with Wake-on-LAN if it is off or in standby."""
+    def ensure_on(self) -> bool:
+        """Wake the TV with Wake-on-LAN if it is off or in standby.
+
+        Return True if it had to be woken.
+        """
         if self.power_state() == "on":
-            return
+            return False
         if not self.cfg.mac:
             raise RuntimeError(
                 "TV is off and no [tv] mac is set, so it can't be woken up"
@@ -261,7 +295,7 @@ class FrameTV:
             time.sleep(2)
             if self.power_state() == "on":
                 time.sleep(3)  # let the art service start
-                return
+                return True
         raise RuntimeError("TV did not wake up")
 
     def _press_power(self) -> None:
@@ -296,11 +330,16 @@ class FrameTV:
                 time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
             art.close()
 
-    def set_art_mode(self, on: bool) -> None:
+    def set_art_mode(self, on: bool, just_woke: bool = False) -> None:
         wanted = "on" if on else "off"
         art = self._art()
         try:
-            art.open(ready_wait=READY_WAIT_BEFORE_WAKE)
+            if just_woke:
+                # Right after waking the art service joins late; wait for it.
+                art.open(ready_wait=READY_WAIT)
+            else:
+                # Missing altogether means the TV stopped it: press at once.
+                art.open(ready_wait=READY_WAIT_BEFORE_WAKE, wait_if_absent=0)
             if not art.ready:
                 # The power press may flip Art Mode the wrong way; the state is
                 # read and set explicitly below, so it ends up right either way.
@@ -323,12 +362,10 @@ class FrameTV:
                 art.close()
 
     def go_to_art(self) -> None:
-        self.ensure_on()
-        self.set_art_mode(True)
+        self.set_art_mode(True, just_woke=self.ensure_on())
 
     def go_to_tv(self) -> None:
-        self.ensure_on()
-        self.set_art_mode(False)
+        self.set_art_mode(False, just_woke=self.ensure_on())
         if self.cfg.input_key:
             time.sleep(1)
             remote = self._remote()

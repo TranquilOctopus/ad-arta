@@ -21,7 +21,8 @@ host = ""
 
 [bridge]
 # Seconds to wait after the Apple TV sleeps before switching to Art Mode.
-# Ignores very short sleep/wake blips.
-off_delay = 2.0
+# 0 switches right away. A second or two ignores very short sleep/wake
+# blips, but makes the switch feel slow.
+off_delay = 0.0
 # Also switch the TV out of Art Mode when the Apple TV wakes up.
 wake_tv_with_appletv = true

@@ -174,7 +174,7 @@ ad-arta working.
 | `tv.input_key` | Optional key sent after leaving Art Mode, e.g. `KEY_HDMI1` |
 | `appletv.identifier` | Apple TV identifier from `atvremote scan` (optional) |
 | `appletv.host` | Apple TV IP, skips discovery (optional) |
-| `bridge.off_delay` | Seconds to wait before Art Mode (ignores quick sleep/wake blips) |
+| `bridge.off_delay` | Seconds to wait before Art Mode (default 0; a second or two ignores quick sleep/wake blips) |
 | `bridge.wake_tv_with_appletv` | Leave Art Mode when the Apple TV wakes |
 
 ## Troubleshooting
