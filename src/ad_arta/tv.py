@@ -340,6 +340,13 @@ class FrameTV:
             else:
                 # Missing altogether means the TV stopped it: press at once.
                 art.open(ready_wait=READY_WAIT_BEFORE_WAKE, wait_if_absent=0)
+            if not art.ready and not on:
+                # Art Mode needs the art service, so with the service stopped
+                # the TV isn't showing art. Pressing power here would switch
+                # it *to* Art Mode, and the TV would then put the Apple TV to
+                # sleep over HDMI-CEC.
+                log.info("Art Mode service isn't running, so Art Mode is already off")
+                return
             if not art.ready:
                 # The power press may flip Art Mode the wrong way; the state is
                 # read and set explicitly below, so it ends up right either way.

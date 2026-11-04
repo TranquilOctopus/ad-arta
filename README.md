@@ -143,16 +143,17 @@ Notes:
   such as a Raspberry Pi is a better fit.
 - Windows Firewall may ask to allow Python on the private network. Allow it;
   Apple TV discovery needs it.
-- To start at logon, use Task Scheduler. From the repo folder, in PowerShell:
+- To start at boot (before anyone logs in) and restart if it stops, run this
+  from an elevated PowerShell (Run as administrator) in the repo folder:
 
 ```powershell
-$action = New-ScheduledTaskAction `
-  -Execute "$PWD\.venv\Scripts\ad-arta.exe" `
-  -Argument "--config `"$PWD\config.toml`" run" `
-  -WorkingDirectory "$PWD"
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-Register-ScheduledTask -TaskName "ad-arta" -Action $action -Trigger $trigger
+powershell -ExecutionPolicy Bypass -File deploy\windows-autostart.ps1
 ```
+
+  It adds a scheduled task called `ad-arta` that runs as your account without
+  storing your password, so it can read the TV token and the Apple TV pairing.
+  Output goes to `ad-arta.log`. Rerun it after updating ad-arta; add `-Remove`
+  to take it off again.
 
 If `config.toml` was saved by an editor as UTF-8 with BOM or UTF-16, that is
 fine; ad-arta reads both.

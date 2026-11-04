@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="ad-arta", description="Frame TV Art Mode bridge for Apple TV")
     parser.add_argument("-c", "--config", help="path to config.toml")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--log-file", help="append log output to this file")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="watch the Apple TV and drive the Frame TV")
     sub.add_parser("pair-tv", help="connect once so you can press Allow on the TV")
@@ -38,6 +39,8 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        filename=args.log_file,
+        encoding="utf-8",
     )
     cfg = load_config(args.config)
     tv = FrameTV(cfg.tv)

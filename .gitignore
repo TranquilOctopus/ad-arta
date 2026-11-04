@@ -6,3 +6,4 @@ config.toml
 *.token
 tv-token.txt
 .pytest_cache/
+ad-arta.log

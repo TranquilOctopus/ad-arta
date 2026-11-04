@@ -504,3 +504,23 @@ def test_open_returns_at_once_when_service_absent(monkeypatch, tmp_path):
     art.open(ready_wait=8, wait_if_absent=0)
     assert not art.ready
     assert not art.host_present
+
+
+def test_leaving_art_mode_with_service_stopped_does_not_press_power(
+    tmp_path, monkeypatch
+):
+    # Pressing power here would switch the TV *to* Art Mode and, over
+    # HDMI-CEC, put the Apple TV that just woke back to sleep.
+    tv, art = tv_with_fake_art(tmp_path, monkeypatch, ready=False, mode="on")
+    tv.set_art_mode(False)
+    assert tv.power_presses == 0
+    assert art.set_calls == []
+    assert art.closed
+
+
+def test_leaving_art_mode_right_after_waking_does_not_press_power(
+    tmp_path, monkeypatch
+):
+    tv, art = tv_with_fake_art(tmp_path, monkeypatch, ready=False)
+    tv.set_art_mode(False, just_woke=True)
+    assert tv.power_presses == 0
