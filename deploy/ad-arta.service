@@ -1,0 +1,18 @@
+# systemd unit. Install with:
+#   sudo cp deploy/ad-arta.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now ad-arta
+# Adjust User and paths to where you installed ad-arta.
+[Unit]
+Description=Frame TV Art Mode bridge for Apple TV
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/ad-arta
+ExecStart=/home/pi/ad-arta/.venv/bin/ad-arta --config /home/pi/ad-arta/config.toml run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

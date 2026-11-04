@@ -1,0 +1,27 @@
+# Copy to config.toml (or /etc/ad-arta/config.toml) and fill in.
+
+[tv]
+# IP address of the Frame TV. Give it a DHCP reservation in your router.
+host = "192.168.1.50"
+# MAC address of the TV (Settings > Support > About This TV, or your router).
+# Used to wake the TV over the network if it ever turns fully off.
+mac = "AA:BB:CC:DD:EE:FF"
+# Where the pairing token is stored after you press "Allow" on the TV.
+token_file = "tv-token.txt"
+# Optional: remote key to send after leaving Art Mode, e.g. "KEY_HDMI1".
+# Leave empty to return to the last used input (usually the Apple TV).
+input_key = ""
+
+[appletv]
+# Apple TV identifier, from `atvremote scan`. Leave empty to use the first
+# Apple TV found on the network.
+identifier = ""
+# Optional fixed IP (skips multicast discovery, more reliable on some networks).
+host = ""
+
+[bridge]
+# Seconds to wait after the Apple TV sleeps before switching to Art Mode.
+# Ignores very short sleep/wake blips.
+off_delay = 2.0
+# Also switch the TV out of Art Mode when the Apple TV wakes up.
+wake_tv_with_appletv = true

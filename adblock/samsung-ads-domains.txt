@@ -1,0 +1,10 @@
+# Same list as samsung-ads.txt, one domain per line (older Pi-hole). Exact match only,
+# so add subdomains you see in the query log too.
+samsungads.com
+ads.samsung.com
+samsungadhub.com
+gpm.samsungqbe.com
+samsungacr.com
+acr0.samsungcloudsolution.com
+samsungtifa.com
+samsung-com.112.2o7.net

@@ -1,0 +1,20 @@
+# Samsung TV ad + tracking domains, in Adblock syntax (||domain^ also blocks
+# subdomains). Works as a blocklist in AdGuard Home and Pi-hole v6+.
+# For older Pi-hole, use samsung-ads-domains.txt instead.
+#
+# Community-sourced. If something breaks (an app, the Art Store, updates),
+# remove the last line you added and check the query log.
+
+# Smart Hub / home screen ad banners and sponsored tiles
+||samsungads.com^
+||ads.samsung.com^
+||samsungadhub.com^
+||gpm.samsungqbe.com^
+
+# Viewing-information tracking ("ACR", what's on screen)
+||samsungacr.com^
+||acr0.samsungcloudsolution.com^
+
+# Ad ID and analytics
+||samsungtifa.com^
+||samsung-com.112.2o7.net^

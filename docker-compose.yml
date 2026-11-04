@@ -1,0 +1,8 @@
+services:
+  ad-arta:
+    build: .
+    restart: unless-stopped
+    # Host networking is needed for Apple TV discovery (mDNS) and Wake-on-LAN.
+    network_mode: host
+    volumes:
+      - ./data:/data
