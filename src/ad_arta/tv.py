@@ -5,8 +5,12 @@ from __future__ import annotations
 import logging
 import time
 
+import urllib3
 import websocket
-from samsungtvws import SamsungTVWS
+from samsungtvws import SamsungTVWS, exceptions
+from samsungtvws.art import SamsungTVArt
+from samsungtvws.connection import SamsungTVWSConnection
+from samsungtvws.event import MS_CHANNEL_READY_EVENT
 from wakeonlan import send_magic_packet
 
 from .config import TVConfig
@@ -14,6 +18,54 @@ from .config import TVConfig
 log = logging.getLogger(__name__)
 
 CLIENT_NAME = "ad-arta"
+
+# The TV uses a self-signed certificate; that is expected, so don't warn.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+READY_WAIT = 5.0  # seconds to wait for ms.channel.ready
+
+
+class FrameArt(SamsungTVArt):
+    """SamsungTVArt that tolerates broadcasts before ms.channel.ready.
+
+    The stock open() reads exactly one frame after connecting and fails unless
+    it is ms.channel.ready. A real TV may first send e.g.
+    ms.channel.clientDisconnect (another client left), which is not an error.
+    Some older TVs (2020) never send ms.channel.ready at all.
+    """
+
+    def open(self):
+        # Skip SamsungTVArt.open (the strict ready check), use the base one.
+        SamsungTVWSConnection.open(self)
+        conn = self.connection
+        old_timeout = conn.gettimeout()
+        deadline = time.monotonic() + READY_WAIT
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                conn.settimeout(remaining)
+                try:
+                    event, frame = self._recv_frame()
+                except exceptions.ConnectionFailure:  # websocket timeout
+                    break
+                if event == MS_CHANNEL_READY_EVENT:
+                    return conn
+                lowered = str(event).lower()
+                if "error" in lowered or "unauthorized" in lowered:
+                    self.close()
+                    raise exceptions.ConnectionFailure(frame)
+                # clientConnect/clientDisconnect and others: keep waiting
+                log.debug("Ignoring event while waiting for ready: %s", event)
+            log.debug("No ms.channel.ready within %.0fs, continuing", READY_WAIT)
+        finally:
+            if self.connection is not None:
+                try:
+                    self.connection.settimeout(old_timeout)
+                except Exception:  # connection may have been closed above
+                    pass
+        return conn
 
 
 class FrameTV:
@@ -25,6 +77,16 @@ class FrameTV:
 
     def _remote(self, timeout: float = 8) -> SamsungTVWS:
         return SamsungTVWS(
+            self.cfg.host,
+            port=8002,
+            token_file=self.cfg.token_file,
+            timeout=timeout,
+            name=CLIENT_NAME,
+        )
+
+    def _art(self, timeout: float = 8) -> FrameArt:
+        # Same arguments SamsungTVWS.art() passes to SamsungTVArt.
+        return FrameArt(
             self.cfg.host,
             port=8002,
             token_file=self.cfg.token_file,
@@ -45,7 +107,7 @@ class FrameTV:
 
     def art_mode(self) -> str | None:
         """Return "on"/"off", or None if it can't be read."""
-        art = self._remote().art()
+        art = self._art()
         try:
             return art.get_artmode()
         finally:
@@ -72,7 +134,7 @@ class FrameTV:
         raise RuntimeError("TV did not wake up")
 
     def set_art_mode(self, on: bool) -> None:
-        art = self._remote().art()
+        art = self._art()
         try:
             current = art.get_artmode()
             wanted = "on" if on else "off"
