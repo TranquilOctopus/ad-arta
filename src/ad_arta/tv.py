@@ -32,6 +32,7 @@ READY_WAIT = 15.0
 # The service rejoined ~7s after a power key press on a 2020 Frame.
 READY_WAIT_BEFORE_WAKE = 8.0
 WAKE_WAIT = 20.0
+REMOTE_WAKE_TIMEOUT = 20.0
 
 NOT_RUNNING = (
     "The TV's Art Mode service isn't running right now (the TV stops it after "
@@ -266,7 +267,9 @@ class FrameTV:
     def _press_power(self) -> None:
         # On The Frame a short power press switches between TV and Art Mode
         # (it does not turn the TV off) and restarts a stopped art service.
-        remote = self._remote()
+        # While the art service is stopped the remote channel can take 10s+
+        # to answer, so give it longer than the usual 8s.
+        remote = self._remote(timeout=REMOTE_WAKE_TIMEOUT)
         try:
             remote.send_key("KEY_POWER")
         finally:

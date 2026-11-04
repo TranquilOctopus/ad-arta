@@ -11,6 +11,8 @@ license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.10"
 dependencies = [
     "pyatv>=0.14",
+    # srptools 2.0 changed its API and breaks pyatv 0.18 Apple TV pairing.
+    "srptools<2",
     "samsungtvws>=2.6",
     "wakeonlan>=3.0",
     "tomli>=2.0; python_version < '3.11'",
