@@ -22,7 +22,10 @@ CLIENT_NAME = "ad-arta"
 # The TV uses a self-signed certificate; that is expected, so don't warn.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-READY_WAIT = 5.0  # seconds to wait for ms.channel.ready
+# Seconds to wait for ms.channel.ready. Right after a restart or wake the art
+# service can join the channel several seconds late (7s seen on a 2020 Frame),
+# and requests sent before then are lost. Ready usually arrives at once.
+READY_WAIT = 15.0
 
 NO_ART_ANSWER = (
     "The TV's Art Mode service didn't answer. The TV is reachable but its art "
