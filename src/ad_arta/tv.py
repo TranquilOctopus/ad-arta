@@ -7,7 +7,7 @@ import time
 
 import urllib3
 import websocket
-from samsungtvws import SamsungTVWS, exceptions
+from samsungtvws import SamsungTVWS, exceptions, helper
 from samsungtvws.art import SamsungTVArt
 from samsungtvws.connection import SamsungTVWSConnection
 from samsungtvws.event import MS_CHANNEL_READY_EVENT
@@ -24,6 +24,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 READY_WAIT = 5.0  # seconds to wait for ms.channel.ready
 
+NO_ART_ANSWER = (
+    "The TV's Art Mode service didn't answer. The TV is reachable but its art "
+    "service seems stuck; restarting the TV (unplug it for a minute) usually "
+    "fixes this."
+)
+
 
 class FrameArt(SamsungTVArt):
     """SamsungTVArt that tolerates broadcasts before ms.channel.ready.
@@ -33,6 +39,50 @@ class FrameArt(SamsungTVArt):
     ms.channel.clientDisconnect (another client left), which is not an error.
     Some older TVs (2020) never send ms.channel.ready at all.
     """
+
+    def _recv_frame(self):
+        """Receive one frame, giving up after the socket timeout in total.
+
+        websocket-client's recv() answers pings itself and then starts a fresh
+        read with the full timeout. The Frame pings every ~6s, so with an 8s
+        timeout recv() never times out when the art service stays silent.
+        Here pings are handled one by one against a single deadline.
+        """
+        conn = self.connection
+        assert conn
+        budget = conn.gettimeout()
+        deadline = None if budget is None else time.monotonic() + budget
+        try:
+            while True:
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise exceptions.ConnectionFailure("Websocket Time out")
+                    conn.settimeout(remaining)
+                try:
+                    opcode, frame = conn.recv_data_frame(control_frame=True)
+                except websocket.WebSocketTimeoutException as err:
+                    raise exceptions.ConnectionFailure(
+                        f"Websocket Time out: {err}"
+                    ) from err
+                if opcode in (websocket.ABNF.OPCODE_PING, websocket.ABNF.OPCODE_PONG):
+                    continue  # already answered by websocket-client
+                if opcode == websocket.ABNF.OPCODE_CLOSE:
+                    raise exceptions.ConnectionFailure("TV closed the connection")
+                raw = frame.data
+                if opcode == websocket.ABNF.OPCODE_TEXT and isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                break
+        finally:
+            if self.connection is not None:
+                try:
+                    self.connection.settimeout(budget)
+                except Exception:
+                    pass
+        response = helper.process_api_response(raw)
+        event = response.get("event", "*")
+        self._websocket_event(event, response)
+        return event, response
 
     def open(self):
         # Skip SamsungTVArt.open (the strict ready check), use the base one.
@@ -110,6 +160,9 @@ class FrameTV:
         art = self._art()
         try:
             return art.get_artmode()
+        except exceptions.ConnectionFailure:
+            log.warning(NO_ART_ANSWER)
+            return None
         finally:
             art.close()
 
@@ -143,6 +196,8 @@ class FrameTV:
                 return
             log.info("Turning Art Mode %s", wanted)
             art.set_artmode(wanted)
+        except exceptions.ConnectionFailure as err:
+            raise RuntimeError(NO_ART_ANSWER) from err
         finally:
             art.close()
 

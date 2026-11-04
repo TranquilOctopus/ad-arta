@@ -65,10 +65,12 @@ def main(argv: list[str] | None = None) -> None:
         print(f"TV power: {power}")
         if power == "on":
             print(f"Art Mode: {tv.art_mode()}")
-    elif args.command == "art-on":
-        tv.go_to_art()
-    elif args.command == "art-off":
-        tv.go_to_tv()
+    elif args.command in ("art-on", "art-off"):
+        action = tv.go_to_art if args.command == "art-on" else tv.go_to_tv
+        try:
+            action()
+        except RuntimeError as err:
+            raise SystemExit(str(err))
 
 
 if __name__ == "__main__":
