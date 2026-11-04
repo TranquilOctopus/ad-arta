@@ -183,7 +183,13 @@ ad-arta working.
   logs "Connected to ..." and "Apple TV turned off". If it doesn't, pair
   again with both the `companion` and `airplay` protocols.
 - **"TV is off and no mac is set":** add `tv.mac` and turn on Power On with Mobile.
-- **TV asks to Allow again:** delete `tv-token.txt` and run `pair-tv` again.
+- **TV asks to Allow again:** on the TV, set Settings > General > External
+  Device Manager > Device Connection Manager > Access Notification to
+  "First Time Only" and delete the "Smart Device" entries in its Device
+  List. Then delete `tv-token.txt` and run `pair-tv` again.
+- **"Art Mode service isn't running":** the Frame stops its art service
+  after a while on an HDMI input. `art-on`/`art-off` (and the bridge) wake
+  it with a short power key press, which needs a working pairing (above).
 - **Art Mode turns off after a few hours:** that's the Frame's own Sleep
   After / motion sensor setting in Art Mode settings.
 

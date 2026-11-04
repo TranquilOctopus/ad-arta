@@ -56,9 +56,12 @@ def main(argv: list[str] | None = None) -> None:
         if os.path.exists(cfg.tv.token_file):
             print(f"Paired. Token saved to {cfg.tv.token_file}")
         else:
-            print(
-                "The TV accepted the connection but sent no token. This is "
-                "fine on some models; commands will still work."
+            raise SystemExit(
+                "The TV accepted the connection but sent no token, so it will "
+                "ask to Allow again on every connection and switching Art Mode "
+                "can fail. Run `ad-arta pair-tv` again and choose Allow on the "
+                "TV. If it keeps happening, see \"TV asks to Allow again\" in "
+                "the README."
             )
     elif args.command == "status":
         power = tv.power_state()
