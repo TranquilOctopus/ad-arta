@@ -10,7 +10,7 @@ import websocket
 from samsungtvws import SamsungTVWS, exceptions, helper
 from samsungtvws.art import SamsungTVArt
 from samsungtvws.connection import SamsungTVWSConnection
-from samsungtvws.event import MS_CHANNEL_READY_EVENT
+from samsungtvws.event import D2D_SERVICE_MESSAGE_EVENT, MS_CHANNEL_READY_EVENT
 from wakeonlan import send_magic_packet
 
 from .config import TVConfig
@@ -27,10 +27,23 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # and requests sent before then are lost. Ready usually arrives at once.
 READY_WAIT = 15.0
 
+# When switching Art Mode: how long to wait for the art service before
+# pressing the power key to wake it, and how long to wait after pressing it.
+# The service rejoined ~7s after a power key press on a 2020 Frame.
+READY_WAIT_BEFORE_WAKE = 8.0
+WAKE_WAIT = 20.0
+
+NOT_RUNNING = (
+    "The TV's Art Mode service isn't running right now (the TV stops it after "
+    "a while). art-on and art-off start it again by pressing the power key."
+)
+DID_NOT_START = (
+    "The TV's Art Mode service didn't start, even after pressing the power "
+    "key. Restarting the TV (unplug it for a minute) usually fixes this."
+)
 NO_ART_ANSWER = (
-    "The TV's Art Mode service didn't answer. The TV is reachable but its art "
-    "service seems stuck; restarting the TV (unplug it for a minute) usually "
-    "fixes this."
+    "The TV's Art Mode service stopped answering. Try again; if it keeps "
+    "happening, restart the TV (unplug it for a minute)."
 )
 
 
@@ -40,8 +53,12 @@ class FrameArt(SamsungTVArt):
     The stock open() reads exactly one frame after connecting and fails unless
     it is ms.channel.ready. A real TV may first send e.g.
     ms.channel.clientDisconnect (another client left), which is not an error.
-    Some older TVs (2020) never send ms.channel.ready at all.
+    ms.channel.ready only arrives once the TV's art service is on the channel.
+    The Frame stops that service after a while; `ready` says whether it is
+    there.
     """
+
+    ready = False
 
     def _recv_frame(self):
         """Receive one frame, giving up after the socket timeout in total.
@@ -87,12 +104,20 @@ class FrameArt(SamsungTVArt):
         self._websocket_event(event, response)
         return event, response
 
-    def open(self):
+    def open(self, ready_wait: float = READY_WAIT):
         # Skip SamsungTVArt.open (the strict ready check), use the base one.
         SamsungTVWSConnection.open(self)
+        self.ready = False
+        self.wait_ready(ready_wait)
+        return self.connection
+
+    def wait_ready(self, seconds: float) -> bool:
+        """Wait up to `seconds` for ms.channel.ready. Return self.ready."""
+        if self.ready:
+            return True
         conn = self.connection
         old_timeout = conn.gettimeout()
-        deadline = time.monotonic() + READY_WAIT
+        deadline = time.monotonic() + seconds
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -104,21 +129,65 @@ class FrameArt(SamsungTVArt):
                 except exceptions.ConnectionFailure:  # websocket timeout
                     break
                 if event == MS_CHANNEL_READY_EVENT:
-                    return conn
+                    self.ready = True
+                    return True
                 lowered = str(event).lower()
                 if "error" in lowered or "unauthorized" in lowered:
                     self.close()
                     raise exceptions.ConnectionFailure(frame)
                 # clientConnect/clientDisconnect and others: keep waiting
                 log.debug("Ignoring event while waiting for ready: %s", event)
-            log.debug("No ms.channel.ready within %.0fs, continuing", READY_WAIT)
+            log.debug("No ms.channel.ready within %.0fs, continuing", seconds)
+            return False
         finally:
             if self.connection is not None:
                 try:
                     self.connection.settimeout(old_timeout)
                 except Exception:  # connection may have been closed above
                     pass
-        return conn
+
+    def set_artmode_confirmed(self, wanted: str) -> None:
+        """Set Art Mode and wait until the TV confirms it.
+
+        Turning Art Mode on, the Frame sends no reply carrying our request id,
+        only an art_mode_changed broadcast, so the stock set_artmode() waits
+        until it times out. Accept either as confirmation.
+        """
+        req_id = self._new_request_uuid()
+        self._send_art_request(
+            {"request": "set_artmode_status", "value": wanted},
+            wait_for_event=None,
+            request_uuid=req_id,
+        )
+        conn = self.connection
+        old_timeout = conn.gettimeout()
+        deadline = time.monotonic() + (self.timeout or READY_WAIT)
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise exceptions.ConnectionFailure("Websocket Time out")
+                conn.settimeout(remaining)
+                event, frame = self._recv_frame()
+                if event != D2D_SERVICE_MESSAGE_EVENT:
+                    continue
+                payload = self._decode_d2d_payload(frame) or {}
+                sub_event = payload.get("event")
+                if sub_event == "error":
+                    raise exceptions.ResponseError(
+                        "set_artmode_status failed with error number "
+                        f"{payload.get('error_code', 'unknown')}"
+                    )
+                if payload.get("request_id", payload.get("id")) == req_id:
+                    return
+                if sub_event == "art_mode_changed" and payload.get("status") == wanted:
+                    return
+        finally:
+            if self.connection is not None:
+                try:
+                    self.connection.settimeout(old_timeout)
+                except Exception:
+                    pass
 
 
 class FrameTV:
@@ -164,7 +233,7 @@ class FrameTV:
         try:
             return art.get_artmode()
         except exceptions.ConnectionFailure:
-            log.warning(NO_ART_ANSWER)
+            log.warning(NOT_RUNNING)
             return None
         finally:
             art.close()
@@ -189,16 +258,33 @@ class FrameTV:
                 return
         raise RuntimeError("TV did not wake up")
 
+    def _press_power(self) -> None:
+        # On The Frame a short power press switches between TV and Art Mode
+        # (it does not turn the TV off) and restarts a stopped art service.
+        remote = self._remote()
+        try:
+            remote.send_key("KEY_POWER")
+        finally:
+            remote.close()
+
     def set_art_mode(self, on: bool) -> None:
+        wanted = "on" if on else "off"
         art = self._art()
         try:
+            art.open(ready_wait=READY_WAIT_BEFORE_WAKE)
+            if not art.ready:
+                # The power press may flip Art Mode the wrong way; the state is
+                # read and set explicitly below, so it ends up right either way.
+                log.info("Art Mode service isn't running, pressing power to wake it")
+                self._press_power()
+                if not art.wait_ready(WAKE_WAIT):
+                    raise RuntimeError(DID_NOT_START)
             current = art.get_artmode()
-            wanted = "on" if on else "off"
             if current == wanted:
                 log.info("Art Mode already %s", wanted)
                 return
             log.info("Turning Art Mode %s", wanted)
-            art.set_artmode(wanted)
+            art.set_artmode_confirmed(wanted)
         except exceptions.ConnectionFailure as err:
             raise RuntimeError(NO_ART_ANSWER) from err
         finally:
