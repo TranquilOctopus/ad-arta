@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 
 from .config import load_config
 from .tv import FrameTV
@@ -48,8 +49,17 @@ def main(argv: list[str] | None = None) -> None:
             pass
     elif args.command == "pair-tv":
         print("Look at the TV and choose Allow...")
-        tv.pair()
-        print(f"Paired. Token saved to {cfg.tv.token_file}")
+        try:
+            tv.pair()
+        except RuntimeError as err:
+            raise SystemExit(str(err))
+        if os.path.exists(cfg.tv.token_file):
+            print(f"Paired. Token saved to {cfg.tv.token_file}")
+        else:
+            print(
+                "The TV accepted the connection but sent no token. This is "
+                "fine on some models; commands will still work."
+            )
     elif args.command == "status":
         power = tv.power_state()
         print(f"TV power: {power}")

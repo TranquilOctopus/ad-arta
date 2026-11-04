@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 
+import websocket
 from samsungtvws import SamsungTVWS
 from wakeonlan import send_magic_packet
 
@@ -22,12 +23,12 @@ class FrameTV:
         self.cfg = cfg
         self.wake_timeout = wake_timeout
 
-    def _remote(self) -> SamsungTVWS:
+    def _remote(self, timeout: float = 8) -> SamsungTVWS:
         return SamsungTVWS(
             self.cfg.host,
             port=8002,
             token_file=self.cfg.token_file,
-            timeout=8,
+            timeout=timeout,
             name=CLIENT_NAME,
         )
 
@@ -100,6 +101,20 @@ class FrameTV:
 
     def pair(self) -> None:
         """Open a connection so the TV shows its "Allow" prompt."""
-        remote = self._remote()
-        remote.open()
-        remote.close()
+        wait = 60
+        host = self.cfg.host
+        try:
+            remote = self._remote(timeout=wait)
+            remote.open()
+            remote.close()
+        except (websocket.WebSocketTimeoutException, TimeoutError) as err:
+            raise RuntimeError(
+                f"No answer on the TV within {wait} seconds. Run `ad-arta pair-tv` "
+                "again and choose Allow on the TV (if you already pressed Allow, "
+                "the second run usually succeeds right away)."
+            ) from err
+        except OSError as err:  # includes ConnectionError
+            raise RuntimeError(
+                f"Couldn't reach the TV at {host}. Check the IP address and "
+                "that the TV is on."
+            ) from err
