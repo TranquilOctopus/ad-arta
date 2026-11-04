@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,8 +56,19 @@ def find_config(path: str | None) -> Path:
 
 def load_config(path: str | None = None) -> Config:
     config_path = find_config(path)
-    with open(config_path, "rb") as f:
-        raw = tomllib.load(f)
+    data = config_path.read_bytes()
+    # Windows editors/PowerShell may save with a UTF-8 BOM or as UTF-16.
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        text = data.decode("utf-16")
+    else:
+        text = data.decode("utf-8-sig")
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise SystemExit(
+            f"{config_path}: invalid TOML: {e}\n"
+            "Check the file is valid TOML (start from a copy of config.example.toml)."
+        ) from e
 
     if "tv" not in raw or not raw["tv"].get("host"):
         raise SystemExit(f"{config_path}: [tv] host is required")

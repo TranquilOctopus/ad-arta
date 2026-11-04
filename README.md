@@ -118,6 +118,45 @@ Or with Docker: put `config.toml`, `tv-token.txt` and `.pyatv.conf` in
 `./data`, then run `docker compose up -d`. Pair with the Apple TV before
 this step.
 
+### Windows
+
+Everything above works on Windows too (Python 3.10+, PowerShell). The
+equivalents for steps 3 to 6:
+
+```powershell
+git clone https://github.com/tranquiloctopus/ad-arta.git
+cd ad-arta
+py -m venv .venv
+.venv\Scripts\pip install .
+Copy-Item config.example.toml config.toml
+notepad config.toml          # set the TV IP and MAC
+```
+
+Run commands as `.venv\Scripts\ad-arta pair-tv`, `.venv\Scripts\ad-arta run`,
+and so on. Pair the Apple TV with `.venv\Scripts\atvremote scan` and
+`.venv\Scripts\atvremote --id <identifier> --protocol companion pair`
+(then `--protocol airplay pair`).
+
+Notes:
+
+- The PC must stay on and awake for the bridge to work. An always-on device
+  such as a Raspberry Pi is a better fit.
+- Windows Firewall may ask to allow Python on the private network. Allow it;
+  Apple TV discovery needs it.
+- To start at logon, use Task Scheduler. From the repo folder, in PowerShell:
+
+```powershell
+$action = New-ScheduledTaskAction `
+  -Execute "$PWD\.venv\Scripts\ad-arta.exe" `
+  -Argument "--config `"$PWD\config.toml`" run" `
+  -WorkingDirectory "$PWD"
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName "ad-arta" -Action $action -Trigger $trigger
+```
+
+If `config.toml` was saved by an editor as UTF-8 with BOM or UTF-16, that is
+fine; ad-arta reads both.
+
 ## Removing ads
 
 See **[docs/remove-ads.md](docs/remove-ads.md)**: TV privacy and ad
